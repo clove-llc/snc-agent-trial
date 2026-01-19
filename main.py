@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import functions_framework
 import pandas as pd
 import requests
+from dotenv import load_dotenv
 
 # Google Cloudサービス
 from google.cloud import storage, bigquery
@@ -24,22 +25,23 @@ from flask import Request, jsonify
 # ============================================================================
 # 環境変数
 # ============================================================================
+load_dotenv()
 
 # Slack Webhook URL
-SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
 
 # Google Cloud Storage URI
-CUSTOMER_ATTRIBUTE_ANALYSIS_PROMPT_URI = os.environ.get(
+CUSTOMER_ATTRIBUTE_ANALYSIS_PROMPT_URI = os.getenv(
     "CUSTOMER_ATTRIBUTE_ANALYSIS_PROMPT_URI"
 )
-CUSTOMER_APPROACH_RECOMMENDATION_PROMPT_URI = os.environ.get(
+CUSTOMER_APPROACH_RECOMMENDATION_PROMPT_URI = os.getenv(
     "CUSTOMER_APPROACH_RECOMMENDATION_PROMPT_URI"
 )
-SQL_GCS_URI = os.environ.get("SQL_GCS_URI")
+SQL_GCS_URI = os.getenv("SQL_GCS_URI")
 
 # Project
-PROJECT_ID = os.environ.get("PROJECT_ID")
-USE_LEGACY_SQL = os.environ.get("USE_LEGACY_SQL", "false").lower() == "true"
+PROJECT_ID = os.getenv("PROJECT_ID")
+USE_LEGACY_SQL = os.getenv("USE_LEGACY_SQL", "false").lower() == "true"
 
 logging.basicConfig(level=logging.INFO)
 
