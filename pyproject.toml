@@ -1,0 +1,25 @@
+[project]
+name = "snc-agent-trial"
+version = "0.1.0"
+description = ""
+authors = [
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "google-cloud-storage (>=3.9.0,<4.0.0)",
+    "google-cloud-bigquery (>=3.40.0,<4.0.0)",
+    "google-cloud-aiplatform (>=1.137.0,<2.0.0)",
+    "pandas (>=2.2,<3.0)",
+    "requests (>=2.32.5,<3.0.0)",
+    "python-dotenv (>=1.2.1,<2.0.0)",
+    "db-dtypes (>=1.5.0,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+package-mode = false
