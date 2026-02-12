@@ -1,54 +1,26 @@
-# ============================================================================
-# Import
-# ============================================================================
-
-# Python標準ライブラリ
-import os
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-
-# サードパーティーライブラリ
-import functions_framework
 import pandas as pd
 import requests
-from dotenv import load_dotenv
-
-# Google Cloudサービス
-from google.cloud import storage, bigquery
 import vertexai
+
+from google.cloud import storage, bigquery
 from vertexai.generative_models import GenerativeModel
-
-# Flaskウェブフレームワーク
-from flask import Request, jsonify
-
-# ============================================================================
-# 環境変数
-# ============================================================================
-load_dotenv()
-
-# Slack Webhook URL
-SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
-
-# Google Cloud Storage URI
-CUSTOMER_ATTRIBUTE_ANALYSIS_PROMPT_URI = os.getenv(
-    "CUSTOMER_ATTRIBUTE_ANALYSIS_PROMPT_URI"
+from src.config.logging_config import setup_logging
+from src.config.config import (
+    CUSTOMER_APPROACH_RECOMMENDATION_PROMPT_URI,
+    CUSTOMER_ATTRIBUTE_ANALYSIS_PROMPT_URI,
+    GCP_PROJECT_ID,
+    SLACK_WEBHOOK_URL,
+    SQL_GCS_URI,
+    USE_LEGACY_SQL,
 )
-CUSTOMER_APPROACH_RECOMMENDATION_PROMPT_URI = os.getenv(
-    "CUSTOMER_APPROACH_RECOMMENDATION_PROMPT_URI"
-)
-SQL_GCS_URI = os.getenv("SQL_GCS_URI")
 
-# Project
-PROJECT_ID = os.getenv("PROJECT_ID")
-USE_LEGACY_SQL = os.getenv("USE_LEGACY_SQL", "false").lower() == "true"
-
-logging.basicConfig(level=logging.INFO)
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# 外部との接続
-# ============================================================================
 def post_to_slack(message: str, webhook_url: str):
     """Slackにテキストメッセージを送信"""
     payload = {"text": message}
@@ -56,10 +28,10 @@ def post_to_slack(message: str, webhook_url: str):
     res = requests.post(webhook_url, json=payload)
 
     if res.status_code != 200:
-        logging.error(f"Slack webhook error: {res.text}")
+        logger.error(f"Slack webhook error: {res.text}")
 
 
-def run_query(sql: str, project: str) -> dict:
+def run_query(sql: str, project: str) -> pd.DataFrame:
     """BigQuery に SQL を投げて完了を待つ。戻り値は job 情報の dict"""
     bd_client = bigquery.Client(project=project)
     job_config = bigquery.QueryJobConfig()
@@ -113,7 +85,7 @@ def call_gemini_with_payload(
     return response.text
 
 
-def build_gemini_payload_from_df(df: dict) -> dict:
+def build_gemini_payload_from_df(df: pd.DataFrame) -> dict:
     # 実行年月・日時を取得する
     JST = timezone(timedelta(hours=+9), "JST")
     target_month = datetime.now(JST).strftime("%Y-%m")
@@ -219,41 +191,19 @@ def build_gemini_payload_from_df(df: dict) -> dict:
     return payload
 
 
-@functions_framework.http
-def execute_from_gcs(request: Request):
-    """関数のエントリポイント"""
+def main():
     try:
-        if not SQL_GCS_URI:
-            return (
-                jsonify({"error": "Failed to retrieve the Google Cloud Storage URL."}),
-                400,
-            )
-        logging.info("Reading SQL from [%s] ...", SQL_GCS_URI)
+
+        logger.info("Reading SQL from [%s] ...", SQL_GCS_URI)
 
         # Google Cloud Storage からSQLを取得
         sql = read_text_from_gcs(SQL_GCS_URI)
 
-        if not PROJECT_ID:
-            return jsonify({"error": "Failed to retrieve the Project ID."}), 400
-        logging.info("Executing SQL [len=%d chars] ...", len(sql))
+        logger.info("Executing SQL [len=%d chars] ...", len(sql))
 
         # BigQuery 上でクエリを実行し、データフレームを取得
-        df = run_query(sql, project=PROJECT_ID)
+        df = run_query(sql, project=GCP_PROJECT_ID)
         payload = build_gemini_payload_from_df(df)
-
-        # Step1: 顧客属性分析
-        if not CUSTOMER_ATTRIBUTE_ANALYSIS_PROMPT_URI:
-            return (
-                jsonify(
-                    {
-                        "error": "Failed to retrieve the Customer attribute analysis prompt."
-                    }
-                ),
-                400,
-            )
-        logging.info(
-            "Reading Prompt from [%s] ...", CUSTOMER_ATTRIBUTE_ANALYSIS_PROMPT_URI
-        )
 
         # Google Cloud Storage から顧客属性を定義するためのGemini用プロンプトを取得
         customer_attribute_analysis_prompt = read_text_from_gcs(
@@ -264,19 +214,10 @@ def execute_from_gcs(request: Request):
             prompt_template=customer_attribute_analysis_prompt,
             placeholder_token="{payload_json}",
             payload=payload,
-            project=PROJECT_ID,
+            project=GCP_PROJECT_ID,
         )
 
-        if not CUSTOMER_APPROACH_RECOMMENDATION_PROMPT_URI:
-            return (
-                jsonify(
-                    {
-                        "error": "Failed to retrieve the Customr approach recommendation prompt."
-                    }
-                ),
-                400,
-            )
-        logging.info(
+        logger.info(
             "Reading Prompt from [%s] ...", CUSTOMER_APPROACH_RECOMMENDATION_PROMPT_URI
         )
 
@@ -289,21 +230,20 @@ def execute_from_gcs(request: Request):
             prompt_template=customer_approach_recommendation_prompt,
             placeholder_token="{attributes_json}",
             payload=customer_attribute_analysis_result,
-            project=PROJECT_ID,
+            project=GCP_PROJECT_ID,
         )
 
         slack_message = (
             f"AI提案（テキスト出力）:\n{customer_approach_recommendation_result}"
         )
 
-        if not SLACK_WEBHOOK_URL:
-            return jsonify({"error": "Failed to retrieve the SLACK WEBHOOK URL."}), 400
-        logging.info("Sending Message to [%s] ...", SLACK_WEBHOOK_URL)
+        logger.info("Sending Message to [%s] ...", SLACK_WEBHOOK_URL)
         # Slackの指定のチャンネルにGeminiの出力結果を送信
         post_to_slack(slack_message, SLACK_WEBHOOK_URL)
 
-        return jsonify({"message": "Query executed", "rows": len(df)}), 200
+    except Exception:
+        logger.exception("Failed to execute query")
 
-    except Exception as e:
-        logging.exception("Failed to execute query")
-        return jsonify({"error": str(e)}), 500
+
+if __name__ == "__main__":
+    main()
